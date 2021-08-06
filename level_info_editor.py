@@ -43,9 +43,7 @@ class WorldInfo():
         """Initialises the WorldInfo"""
         self.WorldNumber = None
         self.HasL = False
-        self.HasR = False
         self.LName = ''
-        self.RName = ''
         self.Levels = []
 
     def toPyObject(self):
@@ -60,18 +58,9 @@ class WorldInfo():
         """Turns the left half on or off"""
         self.HasL = exists
 
-    def setRightHalf(self, exists):
-        """Turns the right half on or off"""
-        self.HasR = exists
-
     def setLeftName(self, name):
         """Sets the left half name"""
-        self.LName = name
-
-    def setRightName(self, name):
-        """Sets the right half name"""
-        self.RName = name    
-
+        self.LName = name 
 
 
 
@@ -87,7 +76,8 @@ class LevelInfo():
         self.IsLevel = True
         self.NormalExit = False
         self.SecretExit = False
-        self.RightSide = False
+        self.CreatorIndex = 0
+        self.DevRecordTime = 100
 
     def toPyObject(self):
         """Py2/Py3 compatibility"""
@@ -118,7 +108,6 @@ class LevelInfo():
         self.IsLevel     = ((flags >> 1)  & 1 == 1)
         self.NormalExit  = ((flags >> 4)  & 1 == 1)
         self.SecretExit  = ((flags >> 5)  & 1 == 1)
-        self.RightSide   = ((flags >> 10) & 1 == 1)
 
     def getFlags(self):
         """Returns an int which represent the two bytes the flags are encoded in"""
@@ -127,9 +116,15 @@ class LevelInfo():
         if self.IsLevel:    b1 += 0x02
         if self.NormalExit: b1 += 0x10
         if self.SecretExit: b1 += 0x20
-        if self.RightSide:  b2 += 0x04
         return (b2 << 8) | b1
 
+    def setCreator(self, index):
+        """Sets the Creator of the level"""
+        self.CreatorIndex = index
+
+    def setDevRecordTime(self, time):
+        """Sets the Developer Record Time Left"""
+        self.DevRecordTime = time
 
 
 class LevelInfoFile():
@@ -162,57 +157,55 @@ class LevelInfoFile():
         if rawdata[0] != ord('N'): return
         if rawdata[1] != ord('W'): return
         if rawdata[2] != ord('R'): return
-        if rawdata[3] != ord('p'): return
+        #if rawdata[3] != ord('p'): return
 
         # Load the world data offsets
-        numberOfWorlds = rawdata[7]
+        numberOfWorlds = rawdata[11]
         worldOffs = []
         for worldNum in range(numberOfWorlds):
-            off = (rawdata[10 + (4*worldNum)] << 8) | rawdata[11 + (4*worldNum)]
+            off = (rawdata[14 + (4*worldNum)] << 8) | rawdata[15 + (4*worldNum)]
             worldOffs.append(off)
 
         # Load the worlds
-        minTextOffset = 0xFFFF
         worlds = []
         for offset in worldOffs:
             numberOfLevels = rawdata[offset + 3]
-            worldData = rawdata[offset+4: (offset+4) + (12*numberOfLevels)]
+            worldData = rawdata[offset+4: (offset+4) + (16*numberOfLevels)]
 
             # Make a world and add levels/headers to it
             world = WorldInfo()
             headers = []
-            for levelOff in range(int(len(worldData)/12)):
-                levelData = worldData[levelOff*12:(levelOff*12) + 12]
+            for levelOff in range(int(len(worldData)/16)):
+                levelData = worldData[levelOff*16:(levelOff*16) + 16]
 
                 # Find the text
-                textOffset = (levelData[10] << 8) | levelData[11]
-                if textOffset < minTextOffset: minTextOffset = textOffset
-                textLength = levelData[4]
+                textOffset = (levelData[14] << 8) | levelData[15]
+                textLength = levelData[9]
                 text = ''
                 for char in rawdata[textOffset:textOffset + textLength]:
-                    char = char + 0x30
-                    if char > 255: char -= 256
+                    #char = char + 0x30
+                    #if char > 255: char -= 256
                     text += chr(char)
 
                 # Add header info or levels
-                if levelData[3] >= 100:
+                if levelData[7] >= 100:
                     # It's a world header
-                    world.setWorldNumber(levelData[2])
-                    if levelData[3] == 100:
+                    world.setWorldNumber(levelData[6])
+                    if levelData[7] == 100:
                         world.setLeftHalf(True)
                         world.setLeftName(text)
-                    else:
-                        world.setRightHalf(True)
-                        world.setRightName(text)
                 else:
                     # It's a real level
                     level = LevelInfo()
                     level.setName(text)
-                    level.setFileNameW(levelData[0] + 1)
-                    level.setFileNameL(levelData[1] + 1)
-                    level.setDisplayNameW(levelData[2])
-                    level.setDisplayNameL(levelData[3])
-                    flags = (levelData[6] << 8) | levelData[7]
+                    level.setCreator((levelData[0] << 8) | levelData[1])
+                    level.setDevRecordTime((levelData[2] << 8) | levelData[3])
+                    print(level.DevRecordTime)
+                    level.setFileNameW(levelData[4] + 1)
+                    level.setFileNameL(levelData[5] + 1)
+                    level.setDisplayNameW(levelData[6])
+                    level.setDisplayNameL(levelData[7])
+                    flags = (levelData[10] << 8) | levelData[11]
                     level.setFlags(flags)
 
                     # Add it to world
@@ -223,45 +216,87 @@ class LevelInfoFile():
         # Assign worlds to self.worlds
         self.worlds = worlds
 
-        # Get the comments
+        # Get the creators
         start = self.GetCommentsOffset()
-        end = minTextOffset - 1 # collected this while in the self.worlds populating loop
-        self.comments = ''
-        for i in range(start, end):
-            self.comments += chr(rawdata[i])
+        creatorCount = (rawdata[start] << 8) | rawdata[start + 1]
+        creatorLength = (rawdata[start + 2] << 8) | rawdata[start + 3]
+        mainWindow.view.creatorListWidget.clear()
+        for i in range(creatorCount):
+            creatorOffset = (rawdata[start+4*i+4] << 24) | (rawdata[start+4*i+5] << 16) | (rawdata[start+4*i+6] << 8) | rawdata[start+4*i+7]
+            item = QtWidgets.QListWidgetItem(self.GetACreator(rawdata[creatorOffset:]))
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
+            mainWindow.view.creatorListWidget.addItem(item)
+
+
+    def GetACreator(self, raw):
+        result = ''
+        i = 0
+        while not raw[i] == 0:
+            result += chr(raw[i])
+            i += 1
+        return result
+
 
     def GetCommentsOffset(self):
         """Calculates the offset of the comments based on worlds and levels"""
         # I'm trying to make this as easy-to-read as possible.
         offset = 0
 
-        offset += 4 # "NWRp" text
+        offset += 4 # "NWRq" text
+        offset += 4 # creatorsOffset
         offset += 4 # Number of Worlds bytes
         for world in self.worlds:
             offset += 4 # Offset to the world data in the file header
             offset += 4 # Number of Levels bytes
 
-            if world.HasL: offset += 12 # data for that takes 12 bytes
-            if world.HasR: offset += 12 # same as above
+            if world.HasL: offset += 16 # data for that takes 12 bytes
             for level in world.Levels:
-                offset += 12 # Each level is 12 bytes
+                offset += 16 # Each level is 12 bytes
 
         return offset
 
+    def packCreators(self):
+        creators = ''
+        creatorOffsets = []
+        self.comments = []
+        creatorCount = mainWindow.view.creatorListWidget.count()
+        currentOffset = self.GetCommentsOffset() + 4 + (4 * creatorCount)             #4 bytes per offset
+        for i in range(creatorCount):
+            item = mainWindow.view.creatorListWidget.item(i)
+            creators += item.text() + '\0'
+            self.comments.append((currentOffset >> 24) & 0xFF)
+            self.comments.append((currentOffset >> 16) & 0xFF)
+            self.comments.append((currentOffset >>  8) & 0xFF)
+            self.comments.append((currentOffset >>  0) & 0xFF)
+            currentOffset += len(item.text()) + 1
+        
+        for char in creators:
+            self.comments.append(ord(char))
+        
+        return creatorCount
+
+        
     def save(self):
         """Returns bytes that can be saved back to a LevelInfo.bin file"""
         result = []
-        TextStart = self.GetCommentsOffset() + len(self.comments) + 1
+        creatorCount = int(self.packCreators())
+        creatorLength = int(len(self.comments) + 1)
+        TextStart = self.GetCommentsOffset() + creatorLength + 4
 
-        # First things first - add "NWRp"
+        # First things first - add "NWRq"
         result.append(ord('N'))
         result.append(ord('W'))
         result.append(ord('R'))
-        result.append(ord('p'))
+        result.append(ord('q'))
 
-        # Add the Number of Worlds value (we'll only worry about the last 2 bytes)
+        creatorsOffset = self.GetCommentsOffset()
+        result.append((creatorsOffset >> 24) & 0xFF)                                #creatorsOffset
+        result.append((creatorsOffset >> 16) & 0xFF)
+        result.append((creatorsOffset >>  8) & 0xFF)
+        result.append((creatorsOffset >>  0) & 0xFF)
+        
         NumOfWorlds = len(self.worlds)
-        result.append((NumOfWorlds >> 24) & 0xFF)
+        result.append((NumOfWorlds >> 24) & 0xFF)                                   #sectionCount
         result.append((NumOfWorlds >> 16) & 0xFF)
         result.append((NumOfWorlds >>  8) & 0xFF)
         result.append((NumOfWorlds >>  0) & 0xFF)
@@ -277,10 +312,10 @@ class LevelInfoFile():
         WorldNumber = 0
         for world in self.worlds:
             # Set the World Offset start value to CurrentOffset
-            result[ 8+(WorldNumber*4)] = (CurrentOffset >> 24) & 0xFF
-            result[ 9+(WorldNumber*4)] = (CurrentOffset >> 16) & 0xFF
-            result[10+(WorldNumber*4)] = (CurrentOffset >>  8) & 0xFF
-            result[11+(WorldNumber*4)] = (CurrentOffset >>  0) & 0xFF
+            result[12+(WorldNumber*4)] = (CurrentOffset >> 24) & 0xFF               #sectionOffsets
+            result[13+(WorldNumber*4)] = (CurrentOffset >> 16) & 0xFF
+            result[14+(WorldNumber*4)] = (CurrentOffset >>  8) & 0xFF
+            result[15+(WorldNumber*4)] = (CurrentOffset >>  0) & 0xFF
 
             # Create a place to store some world info
             worldData = []
@@ -288,44 +323,55 @@ class LevelInfoFile():
             # Add the Number of Levels value
             num = len(world.Levels)
             if world.HasL: num += 1
-            if world.HasR: num += 1
-            worldData.append((num >> 24) & 0xFF)
+            worldData.append((num >> 24) & 0xFF)                                    #levelCount
             worldData.append((num >> 16) & 0xFF)
             worldData.append((num >>  8) & 0xFF)
             worldData.append((num >>  0) & 0xFF)
 
-            # Add data to worldData for each world half
-            for exists, name in zip((world.HasL, world.HasR), ('L', 'R')):
-                if not exists: continue
-                WName = eval('world.%sName' % name)
-                worldData.append(0x62) # filename: 98-98
-                worldData.append(0x62)
-                worldData.append(world.WorldNumber) # display name: WN-100
-                worldData.append(0x64 if name =='L' else 0x65)
-                worldData.append(len(WName))
+            # Add data to worldData for each world half                             #entry_s
+            if world.HasL:
+                worldData.append(0x00)                                              #creatorID
                 worldData.append(0x00)
-                worldData.append(0x00 if name == 'L' else 0x04)
+                worldData.append(0x00)                                              #devRecordTime
                 worldData.append(0x00)
+                worldData.append(0x62)                                              #worldSlot      filename: 98-98
+                worldData.append(0x62)                                              #levelSlot
+                worldData.append(world.WorldNumber)                                 #displayWorld   display name: WN-100
+                worldData.append(0x64)                                              #displayLevel
+                worldData.append(0x00)                                              #nameLength, padding
+                worldData.append(len(world.LName))
+                worldData.append(0x00)                                              #flags
                 worldData.append(0x00)
+                worldData.append(0x00)                                              #nameOffset
                 worldData.append(0x00)
                 worldData.append((CurrentTextOffset >> 8) & 0xFF)
                 worldData.append((CurrentTextOffset >> 0) & 0xFF)
-                CurrentTextOffset += len(WName) + 1
-                for char in WName: Text.append(ord(char))
+                CurrentTextOffset += len(world.LName) + 1
+                for char in world.LName: Text.append(ord(char))
                 Text.append(0x00)
 
-            # Add data to worldData for each level
+            # Add data to worldData for each level                                  #entry_s
             for level in world.Levels:
                 flags = level.getFlags()
-                worldData.append(level.FileW - 1)
-                worldData.append(level.FileL - 1)
-                worldData.append(level.DisplayW)
-                worldData.append(level.DisplayL)
+                worldData.append((level.CreatorIndex >> 8) & 0xFF)                  #creatorID
+                worldData.append((level.CreatorIndex >> 0) & 0xFF)
+                worldData.append((level.DevRecordTime >> 8) & 0xFF)                 #devRecordTime
+                worldData.append((level.DevRecordTime >> 0) & 0xFF)
+                print("====")
+                print((level.DevRecordTime >> 8) & 0xFF)
+                print((level.DevRecordTime >> 0) & 0xFF)
+                print(level.DevRecordTime)
+                print("====")
+                
+                worldData.append(level.FileW - 1)                                   #worldSlot
+                worldData.append(level.FileL - 1)                                   #levelSlot
+                worldData.append(level.DisplayW)                                    #displayWorld
+                worldData.append(level.DisplayL)                                    #displayLevel
+                worldData.append(0x00)                                              #nameLength, padding
                 worldData.append(len(level.name))
-                worldData.append(0x00)
-                worldData.append((flags >> 8) & 0xFF)
+                worldData.append((flags >> 8) & 0xFF)                               #flags
                 worldData.append((flags >> 0) & 0xFF)
-                worldData.append(0x00)
+                worldData.append(0x00)                                              #nameOffset
                 worldData.append(0x00)
                 worldData.append((CurrentTextOffset >> 8) & 0xFF)
                 worldData.append((CurrentTextOffset >> 0) & 0xFF)
@@ -334,21 +380,29 @@ class LevelInfoFile():
                 Text.append(0x00)
 
             # Add worldData to result
+            someTestingCount = 0
             for i in worldData:
                 result.append(i)
                 CurrentOffset += 1
+                someTestingCount += 1
+
+            print(someTestingCount)
 
             # Get ready for the next world
             WorldNumber += 1
 
         # Add the comments
-        for char in self.comments: result.append(ord(char))
+        result.append((creatorCount >>  8) & 0xFF)                                  #creatorCount
+        result.append((creatorCount >>  0) & 0xFF)
+        result.append((creatorLength >>  8) & 0xFF)                                 #creatorLength
+        result.append((creatorLength >>  0) & 0xFF)
+        for char in self.comments: result.append(char)
         result.append(0x00)
 
         # Add text
         for char in Text:
-            char = char - 0x30
-            if char < 0: char += 256
+            #char = char - 0x30
+            #if char < 0: char += 256
             result.append(char)
 
         # Py2 saves binary files as strings
@@ -449,14 +503,21 @@ class LevelInfoViewer(QtWidgets.QWidget):
 
         # Create the Comments editor and layout
         self.CommentsBox = QtWidgets.QWidget()
-        label = QtWidgets.QLabel('You can add comments to the file here:')
-        self.CommentsEdit = QtWidgets.QPlainTextEdit()
+        
+        self.creatorCurrentlySelectedID = QtWidgets.QLabel("Currently selected: None")
+        self.creatorListWidget = QtWidgets.QListWidget()
+        self.creatorListAdd = QtWidgets.QPushButton("Add")
+        self.creatorListRemove = QtWidgets.QPushButton("Remove")
 
-        self.CommentsEdit.textChanged.connect(self.HandleCommentsChanged)
+        self.creatorListAdd.clicked.connect(self.handleAddCreator)
+        self.creatorListRemove.clicked.connect(self.handleRemoveCreator)
+        self.creatorListWidget.currentRowChanged.connect(self.handleCreatorSelectionChanged)
 
-        STL = QtWidgets.QVBoxLayout()
-        STL.addWidget(label)
-        STL.addWidget(self.CommentsEdit)
+        STL = QtWidgets.QGridLayout()
+        STL.addWidget(self.creatorCurrentlySelectedID, 0, 0, 1, 2)
+        STL.addWidget(self.creatorListWidget,          1, 0, 1, 2)
+        STL.addWidget(self.creatorListAdd,             2, 0, 1, 1)
+        STL.addWidget(self.creatorListRemove,          2, 1, 1, 1)
         self.CommentsBox.setLayout(STL)
 
 
@@ -464,13 +525,23 @@ class LevelInfoViewer(QtWidgets.QWidget):
         tab = QtWidgets.QTabWidget()
         tab.addTab(self.WorldEdit, 'World Options')
         tab.addTab(LevelBox, 'Levels')
-        tab.addTab(self.CommentsBox, 'Comments')
+        tab.addTab(self.CommentsBox, 'Creators')
+        
+        tab.currentChanged.connect(self.handleTabChanged)
 
         # Make a main layout
         L = QtWidgets.QHBoxLayout()
         L.addWidget(WorldBox)
         L.addWidget(tab)
         self.setLayout(L)
+
+    def handleTabChanged(self, index):
+        if index == 1:
+            self.LevelEdit.CreatorEdit.clear()
+            for i in range(self.creatorListWidget.count()):
+                item = self.creatorListWidget.item(i)
+                self.LevelEdit.CreatorEdit.addItem(item.text())
+            
 
     def setFile(self, file):
         """Changes the file to view"""
@@ -486,7 +557,7 @@ class LevelInfoViewer(QtWidgets.QWidget):
             self.WorldPicker.addItem(item)
 
         # Add comments
-        self.CommentsEdit.setPlainText(self.file.comments)
+        #self.CommentsEdit.setPlainText(self.file.comments)
 
         # Update world names
         self.UpdateNames()
@@ -675,15 +746,21 @@ class LevelInfoViewer(QtWidgets.QWidget):
 
         self.UpdateNames()
 
+    #Creators functions
+    def handleAddCreator(self):
+        item = QtWidgets.QListWidgetItem("Someone")
+        item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
+        self.creatorListWidget.addItem(item)
+    
+    def handleRemoveCreator(self):
+        item = self.creatorListWidget.currentItem()
+        self.creatorListWidget.takeItem(self.creatorListWidget.row(item))
 
-    # Comments functions
-
-    def HandleCommentsChanged(self):
-        """Handles comments changes"""
-        self.file.comments = str(self.CommentsEdit.toPlainText())
-
-
-
+    def handleCreatorSelectionChanged(self, row):
+        if row < 0:
+            self.creatorCurrentlySelectedID.setText("Currently selected: None")
+        else:
+            self.creatorCurrentlySelectedID.setText("Currently selected: {}".format(row))
 
 
 ########################################################################
@@ -706,39 +783,28 @@ class WorldOptionsEditor(QtWidgets.QWidget):
         self.LExistsEdit = QtWidgets.QCheckBox()
         self.LNameEdit = QtWidgets.QLineEdit()
         self.LNameEdit.setMaxLength(255)
-        self.RExistsEdit = QtWidgets.QCheckBox()
-        self.RNameEdit = QtWidgets.QLineEdit()
-        self.RNameEdit.setMaxLength(255)
 
         # Add some tooltips
-        numberWarning = '<br><br><b>Note:</b><br>You can only set the world\'s World Number if you have at least one world half turned on!'
+        numberWarning = '<br><br><b>Note:</b><br>You can only set the world\'s World Number if this is an actual world (checkbox)!'
         self.NumberEdit.setToolTip('<b>World Number:</b><br>Changes the currently selected world\'s World Number.' + numberWarning)
-        self.LExistsEdit.setToolTip('<b>Has a 1st Half:</b><br>If this is checked, the currently selected world will have a first half.' + numberWarning)
-        self.LNameEdit.setToolTip('<b>1st Half Name:</b><br>Changes the name for the first half of the world.')
-        self.RExistsEdit.setToolTip('<b>Has a 2nd Half:</b><br>If this is checked, the currently selected world will have a second half.' + numberWarning)
-        self.RNameEdit.setToolTip('<b>2nd Half Name:</b><br>Changes the name for the second half of the world.')
+        self.LExistsEdit.setToolTip('<b>Is an actual world:</b><br>Check this for actual worlds that got a world map.' + numberWarning)
+        self.LNameEdit.setToolTip('<b>World\'s Name:</b><br>This will be displayed on the map hud.')
 
         # Disable them all
         self.NumberEdit.setEnabled(False)
         self.LExistsEdit.setEnabled(False)
         self.LNameEdit.setEnabled(False)
-        self.RExistsEdit.setEnabled(False)
-        self.RNameEdit.setEnabled(False)
 
         # Connect them to handlers
         self.NumberEdit.valueChanged.connect(self.HandleNumberChange)
         self.LExistsEdit.stateChanged.connect(self.HandleLExistsChange)
         self.LNameEdit.textEdited.connect(self.HandleLNameChange)
-        self.RExistsEdit.stateChanged.connect(self.HandleRExistsChange)
-        self.RNameEdit.textEdited.connect(self.HandleRNameChange)
 
         # Create a layout
         L = QtWidgets.QFormLayout()
         L.addRow('World Number:', self.NumberEdit)
-        L.addRow('Has a 1st Half:', self.LExistsEdit)
-        L.addRow('1st Half Name:', self.LNameEdit)
-        L.addRow('Has a 2nd Half:', self.RExistsEdit)
-        L.addRow('2nd Half Name:', self.RNameEdit)
+        L.addRow('Is an actual world:', self.LExistsEdit)
+        L.addRow('World\'s Name:', self.LNameEdit)
         self.setLayout(L)
 
 
@@ -750,34 +816,26 @@ class WorldOptionsEditor(QtWidgets.QWidget):
         self.NumberEdit.setEnabled(False)
         self.LExistsEdit.setEnabled(False)
         self.LNameEdit.setEnabled(False)
-        self.RExistsEdit.setEnabled(False)
-        self.RNameEdit.setEnabled(False)
 
         # Set them all to defaults
         self.NumberEdit.setValue(0)
         self.LExistsEdit.setChecked(False)
         self.LNameEdit.setText('')
-        self.RExistsEdit.setChecked(False)
-        self.RNameEdit.setText('')
 
     def setWorld(self, world):
         """Sets the world to be edited"""
         self.world = world
 
         # Enable the first box, and potentially others
-        if world.HasL or world.HasR: self.NumberEdit.setEnabled(True)
+        if world.HasL: self.NumberEdit.setEnabled(True)
         self.LExistsEdit.setEnabled(True)
         self.LNameEdit.setEnabled(world.HasL)
-        self.RExistsEdit.setEnabled(True)
-        self.RNameEdit.setEnabled(world.HasR)
-
+        
         # Set them to the correct values
-        if world.HasL or world.HasR: self.NumberEdit.setValue(world.WorldNumber)
+        if world.HasL: self.NumberEdit.setValue(world.WorldNumber)
         self.LExistsEdit.setChecked(world.HasL)
         if world.HasL: self.LNameEdit.setText(world.LName)
-        self.RExistsEdit.setChecked(world.HasR)
-        if world.HasR: self.RNameEdit.setText(world.RName)
-
+        
     def HandleNumberChange(self):
         """Handles self.NumberEdit changes"""
         if self.world == None: return
@@ -790,8 +848,8 @@ class WorldOptionsEditor(QtWidgets.QWidget):
         self.world.HasL = self.LExistsEdit.isChecked()
         self.LNameEdit.setEnabled(self.world.HasL)
         if not self.world.HasL: self.LNameEdit.setText('')
-        self.NumberEdit.setEnabled(self.world.HasL or self.world.HasR)
-        if (not self.world.HasL) and (not self.world.HasR):
+        self.NumberEdit.setEnabled(self.world.HasL)
+        if not self.world.HasL:
             self.world.WorldNumber = None
             self.NumberEdit.setValue(0)
         elif self.world.WorldNumber == None:
@@ -804,29 +862,6 @@ class WorldOptionsEditor(QtWidgets.QWidget):
         if self.world == None: return
         self.world.LName = str(self.LNameEdit.text())
         self.dataChanged.emit()
-
-    def HandleRExistsChange(self):
-        """Handles self.RExistsEdit changes"""
-        if self.world == None: return
-        self.world.HasR = self.RExistsEdit.isChecked()
-        self.RNameEdit.setEnabled(self.world.HasR)
-        if not self.world.HasR: self.RNameEdit.setText('')
-        self.NumberEdit.setEnabled(self.world.HasL or self.world.HasR)
-        if (not self.world.HasL) and (not self.world.HasR):
-            self.world.WorldNumber = None
-            self.NumberEdit.setValue(0)
-        elif self.world.WorldNumber == None:
-            self.world.WorldNumber = 0
-            self.NumberEdit.setValue(0)
-        self.dataChanged.emit()
-
-    def HandleRNameChange(self):
-        """Handles self.RNameEdit changes"""
-        if self.world == None: return
-        self.world.RName = str(self.RNameEdit.text())
-        self.dataChanged.emit()
-
-
 
 
 
@@ -849,9 +884,11 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit = QtWidgets.QCheckBox()
         self.NormalExitEdit = QtWidgets.QCheckBox()
         self.SecretExitEdit = QtWidgets.QCheckBox()
-        self.HalfEdit = QtWidgets.QComboBox()
-        self.HalfEdit.addItems(['1st Half', '2nd Half'])
-
+        self.CreatorEdit = QtWidgets.QComboBox()
+        self.DevRecordTimeEdit = QtWidgets.QSpinBox()
+        self.DevRecordTimeEdit.setMinimum(0)
+        self.DevRecordTimeEdit.setMaximum(65535)
+        
         # Add some tooltips
         self.NameEdit.setToolTip('<b>Name:</b><br>Changes the level\'s name.')
         self.FileEdit.setToolTip('<b>Filename:</b><br>Changes the name of the file the level will load from (.arc is automatically added).')
@@ -859,7 +896,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setToolTip('<b>Star Coins Menu:</b><br>If this is checked, the level will appear in the Star Coins Menu.')
         self.NormalExitEdit.setToolTip('<b>Normal Exit:</b><br>If this is checked, the level will have a normal exit.')
         self.SecretExitEdit.setToolTip('<b>Secret Exit:</b><br>If this is checked, the level will have a secret exit.')
-        self.HalfEdit.setToolTip('<b>World Half:</b><br>This changes which side of the Star Coins menu the level appears on.')
+        self.CreatorEdit.setToolTip('<b>Creator:</b><br>This changes which side of the Star Coins menu the level appears on.')
+        self.DevRecordTimeEdit.setToolTip('<b>Dev Record:</b><br>Time left in-game for the recorded dev replay.')
 
         # Disable them
         self.NameEdit.setEnabled(False)
@@ -868,7 +906,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setEnabled(False)
         self.NormalExitEdit.setEnabled(False)
         self.SecretExitEdit.setEnabled(False)
-        self.HalfEdit.setEnabled(False)
+        self.CreatorEdit.setEnabled(False)
+        self.DevRecordTimeEdit.setEnabled(False)
 
         # Connect them to handlers
         self.NameEdit.textEdited.connect(self.HandleNameChange)
@@ -877,7 +916,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.stateChanged.connect(self.HandleIsLevelChange)
         self.NormalExitEdit.stateChanged.connect(self.HandleNormalExitChange)
         self.SecretExitEdit.stateChanged.connect(self.HandleSecretExitChange)
-        self.HalfEdit.currentIndexChanged.connect(self.HandleHalfChange)
+        self.CreatorEdit.currentIndexChanged.connect(self.HandleCreatorChange)
+        self.DevRecordTimeEdit.valueChanged.connect(self.HandleDevRecordChange)
 
         # Create a layout
         L = QtWidgets.QFormLayout()
@@ -887,7 +927,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         L.addRow('Normal Exit:', self.NormalExitEdit)
         L.addRow('Secret Exit:', self.SecretExitEdit)
         L.addRow('Star Coins Menu:', self.IsLevelEdit)
-        L.addRow('World Half:', self.HalfEdit)
+        L.addRow('Creator:', self.CreatorEdit)
+        L.addRow('Dev Record:', self.DevRecordTimeEdit)
         self.setLayout(L)
 
         # Watch for PageUp/PageDown
@@ -899,7 +940,8 @@ class LevelEditor(QtWidgets.QGroupBox):
                            self.NormalExitEdit,
                            self.SecretExitEdit,
                            self.IsLevelEdit,
-                           self.HalfEdit]:
+                           self.CreatorEdit,
+                           self.DevRecordTimeEdit]:
             leafWidget.installEventFilter(self)
 
 
@@ -930,7 +972,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setEnabled(False)
         self.NormalExitEdit.setEnabled(False)
         self.SecretExitEdit.setEnabled(False)
-        self.HalfEdit.setEnabled(False)
+        self.CreatorEdit.setEnabled(False)
+        self.DevRecordTimeEdit.setEnabled(False)
 
         # Set them all to '', 0, and False
         self.NameEdit.setText('')
@@ -939,7 +982,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setChecked(False)
         self.NormalExitEdit.setChecked(False)
         self.SecretExitEdit.setChecked(False)
-        self.HalfEdit.setCurrentIndex(0)
+        self.CreatorEdit.setCurrentIndex(0)
+        self.DevRecordTimeEdit.setValue(0)
 
     def setLevel(self, level):
         """Sets the level to be edited"""
@@ -953,7 +997,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setEnabled(True)
         self.NormalExitEdit.setEnabled(True)
         self.SecretExitEdit.setEnabled(True)
-        self.HalfEdit.setEnabled(True)
+        self.CreatorEdit.setEnabled(True)
+        self.DevRecordTimeEdit.setEnabled(True)
 
         # Set them to the correct values
         self.NameEdit.setText(level.name)
@@ -962,7 +1007,8 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.IsLevelEdit.setChecked(level.IsLevel)
         self.NormalExitEdit.setChecked(level.NormalExit)
         self.SecretExitEdit.setChecked(level.SecretExit)
-        self.HalfEdit.setCurrentIndex(1 if level.RightSide else 0)
+        self.CreatorEdit.setCurrentIndex(level.CreatorIndex)
+        self.DevRecordTimeEdit.setValue(level.DevRecordTime)
 
     def HandleNameChange(self):
         """Handles self.NameEdit changes"""
@@ -1003,10 +1049,16 @@ class LevelEditor(QtWidgets.QGroupBox):
         self.level.SecretExit = self.SecretExitEdit.isChecked()
         self.dataChanged.emit()
 
-    def HandleHalfChange(self):
-        """Handles self.HalfEdit changes"""
+    def HandleCreatorChange(self):
+        """Handles self.CreatorEdit changes"""
         if self.level == None: return
-        self.level.RightSide = (self.HalfEdit.currentIndex() == 1)
+        self.level.CreatorIndex = self.CreatorEdit.currentIndex()
+        self.dataChanged.emit()
+
+    def HandleDevRecordChange(self, value):
+        """Handles self.DevRecordTime changes"""
+        if self.level == None: return
+        self.level.DevRecordTime = value
         self.dataChanged.emit()
 
 
@@ -1189,9 +1241,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 # Main function
-def main():
+if __name__ == '__main__':
     """Main startup function"""
     app = QtWidgets.QApplication(sys.argv)
     mainWindow = MainWindow()
     sys.exit(app.exec_())
-main()
