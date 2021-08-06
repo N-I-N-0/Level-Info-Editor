@@ -200,7 +200,6 @@ class LevelInfoFile():
                     level.setName(text)
                     level.setCreator((levelData[0] << 8) | levelData[1])
                     level.setDevRecordTime((levelData[2] << 8) | levelData[3])
-                    print(level.DevRecordTime)
                     level.setFileNameW(levelData[4] + 1)
                     level.setFileNameL(levelData[5] + 1)
                     level.setDisplayNameW(levelData[6])
@@ -357,12 +356,6 @@ class LevelInfoFile():
                 worldData.append((level.CreatorIndex >> 0) & 0xFF)
                 worldData.append((level.DevRecordTime >> 8) & 0xFF)                 #devRecordTime
                 worldData.append((level.DevRecordTime >> 0) & 0xFF)
-                print("====")
-                print((level.DevRecordTime >> 8) & 0xFF)
-                print((level.DevRecordTime >> 0) & 0xFF)
-                print(level.DevRecordTime)
-                print("====")
-                
                 worldData.append(level.FileW - 1)                                   #worldSlot
                 worldData.append(level.FileL - 1)                                   #levelSlot
                 worldData.append(level.DisplayW)                                    #displayWorld
@@ -380,13 +373,9 @@ class LevelInfoFile():
                 Text.append(0x00)
 
             # Add worldData to result
-            someTestingCount = 0
             for i in worldData:
                 result.append(i)
                 CurrentOffset += 1
-                someTestingCount += 1
-
-            print(someTestingCount)
 
             # Get ready for the next world
             WorldNumber += 1
