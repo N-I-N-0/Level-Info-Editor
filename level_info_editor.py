@@ -69,8 +69,8 @@ class LevelInfo():
     def __init__(self):
         """Initialises the LevelInfo"""
         self.name = ''
-        self.FileW = 0
-        self.FileL = 0
+        self.FileW = 1
+        self.FileL = 1
         self.DisplayW = 0
         self.DisplayL = 0
         self.IsLevel = True
